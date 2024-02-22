@@ -27,7 +27,7 @@ edition = "2021"
 pgrx-pg-config.workspace = true
 pgrx-sql-entity-graph.workspace = true
 
-cargo_toml.workspace = true
+cargo_toml.workspace = true # Further TOML parsing. 
 libc.workspace = true
 regex.workspace = true
 

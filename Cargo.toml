@@ -56,7 +56,7 @@ pgrx-pg-sys = { path = "./pgrx-pg-sys", version = "=0.12.0-alpha.0" }
 pgrx-sql-entity-graph = { path = "./pgrx-sql-entity-graph", version = "=0.12.0-alpha.0" }
 pgrx-pg-config = { path = "./pgrx-pg-config", version = "=0.12.0-alpha.0" }
 
-cargo_toml = "0.16" # used for building projects
+cargo_toml = "0.19.1" # used for building projects
 eyre = "0.6.9" # simplifies error-handling
 libc = "0.2" # FFI compat
 owo-colors = "3.5" # for output highlighting
