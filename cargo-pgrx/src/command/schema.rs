@@ -15,7 +15,9 @@ use eyre::{eyre, WrapErr};
 use owo_colors::OwoColorize;
 use pgrx_pg_config::cargo::PgrxManifestExt;
 use pgrx_pg_config::{get_target_dir, PgConfig, Pgrx};
-use std::io::Write;
+use proc_macro2::Literal;
+use std::fs::File;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 // Since we support extensions with `#[no_std]`
@@ -388,12 +390,34 @@ fn compute_codegen(
     dot: Option<String>,
 ) -> eyre::Result<String> {
     use proc_macro2::{Ident, Span, TokenStream};
-    let lib_name_ident = Ident::new(&lib_name, Span::call_site());
+
+    // Read the {extension}.control to a string.
+    let (control_file_path, _) = find_control_file(&package_manifest_path)?;
+    let mut control_file_content = String::default();
+    File::open(control_file_path)?
+        .read_to_string(&mut control_file_content)?;
+
+    // Open the extension project's `Cargo.toml` to grab the package version
+    let (manifest, _) = get_package_manifest(
+        &clap_cargo::Features::default(), 
+        Some(&lib_name.to_string()), 
+        Some(&package_manifest_path))?;
+    let package_version = manifest.package_version()?;
+
+    let control_file_text = Literal::string(
+        control_file_content
+            .replace("@CARGO_VERSION@", &package_version)
+            .as_str()
+    );
 
     let inputs = {
         let mut out = quote::quote! {
             let mut entities = Vec::new();
-            let control_file_entity = ::pgrx::pgrx_sql_entity_graph::SqlGraphEntity::ExtensionRoot(::#lib_name_ident::__pgrx_marker());
+            let control_file_entity = ::pgrx::pgrx_sql_entity_graph::SqlGraphEntity::ExtensionRoot({
+                    use ::core::convert::TryFrom;
+                    ::pgrx::pgrx_sql_entity_graph::ControlFile::try_from(#control_file_text)
+                        .expect("Could not parse control file, is it valid?")
+                });
             entities.push(control_file_entity);
         };
         for name in symbols.iter() {
