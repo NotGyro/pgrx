@@ -4,7 +4,7 @@
 //! "structure-of-arrays" manner
 
 use bitvec::slice::BitSlice;
-use std::{borrow::Cow, fmt::Debug};
+use std::{borrow::Cow, fmt::Debug, iter::Enumerate, marker::PhantomData};
 
 pub enum Nullable<T> {
     Valid(T),
@@ -463,4 +463,120 @@ impl<Inner> ContiguousNullLayout<usize> for MaybeStrictNulls<Inner> where
 pub trait IntoNullableIterator<T> {
     type Iter: Iterator<Item = Nullable<T>>;
     fn into_nullable_iter(self) -> Self::Iter;
+}
+
+/// Iterator for nullable containers for which the length of the null slice
+/// (in bits) is equal to the length of the underlying data structure (in
+/// elements) which can contain valid elements.
+/// Since contiguous nullable structures are simpler than skipping ones,
+/// we can use a blanket implementation.
+pub struct ContiguousNullableIter<'mcx, I, T, Container>
+where
+    Container: NullableContainer<'mcx, usize, T>,
+    Container::Layout: ContiguousNullLayout<usize>,
+    I: Iterator<Item = Nullable<()>>,
+{
+    nulls: Enumerate<I>,
+    container: &'mcx Container,
+    _marker: PhantomData<T>,
+}
+
+impl<'mcx, I, T: 'mcx, Container> Iterator for ContiguousNullableIter<'mcx, I, T, Container>
+where
+    Container: NullableContainer<'mcx, usize, T>,
+    Container::Layout: ContiguousNullLayout<usize>,
+    I: Iterator<Item = Nullable<()>>,
+{
+    type Item = Nullable<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (index, nullity) = self.nulls.next()?;
+        // Bounds-checking, return none if we've reached the end.
+        if index >= self.container.len() {
+            return None;
+        };
+        Some(nullity.map(|_| {
+            // SAFETY: Container::Layout has been marked
+            // ContiguousNullLayout to indicate that the index in
+            // `get_raw(i)` matches the index in the null layout.
+            unsafe { self.container.get_raw(index) }
+        }))
+    }
+}
+
+/// Iterates over a layout of null values, returning true for values that are null.
+/// Note that for some null layouts (i.e. strict, see [`NoNullsIter`] ) this is
+/// an infinite iterator.
+pub struct NullsIter<'a, Idx, Layout: NullLayout<Idx>>
+where
+    Idx: PartialEq + PartialOrd,
+{
+    layout: &'a Layout,
+    current: Idx,
+}
+
+impl<'mcx, Layout: NullLayout<usize>> Iterator for NullsIter<'mcx, usize, Layout> {
+    type Item = Nullable<()>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result_value = self.layout.is_null(self.current).map(|b| match b {
+            false => Nullable::Valid(()),
+            true => Nullable::Null,
+        });
+        self.current += 1;
+        result_value
+    }
+}
+
+/// Iterator for Strict containers,
+/// which is to say, containers which cannot contain nulls.
+/// This is an infinite iterator.
+pub struct NoNullsIter;
+
+impl Iterator for NoNullsIter {
+    type Item = Nullable<()>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(Nullable::Valid(()))
+    }
+}
+
+impl<'a, 'b> IntoIterator for &'b BitSliceNulls<'a> {
+    type Item = Nullable<()>;
+
+    type IntoIter = NullsIter<'b, usize, BitSliceNulls<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        NullsIter { layout: self, current: 0 }
+    }
+}
+
+impl<'a, 'b> IntoIterator for &'b BoolSliceNulls<'a> {
+    type Item = Nullable<()>;
+
+    type IntoIter = NullsIter<'b, usize, BoolSliceNulls<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        NullsIter { layout: self, current: 0 }
+    }
+}
+
+impl<'a> IntoIterator for &'a StrictNulls {
+    type Item = Nullable<()>;
+
+    type IntoIter = NoNullsIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        NoNullsIter
+    }
+}
+
+impl<'a, 'b> IntoIterator for &'b MaybeStrictNulls<BitSliceNulls<'a>> {
+    type Item = Nullable<()>;
+
+    type IntoIter = NullsIter<'b, usize, MaybeStrictNulls<BitSliceNulls<'a>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        NullsIter { layout: self, current: 0 }
+    }
 }
